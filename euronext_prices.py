@@ -132,6 +132,16 @@ def extract_quotes(html):
     return quotes
 
 
+def diagnose(html):
+    """Print what Euronext actually returned, so a failed run can be understood from the log."""
+    parser = TableParser()
+    parser.feed(html)
+    print(f"  response: {len(html)} bytes, {len(parser.rows)} table rows", file=sys.stderr)
+    if parser.rows:
+        print("  first rows:", parser.rows[:3], file=sys.stderr)
+    print("  start of response:", " ".join(html.split())[:700], file=sys.stderr)
+
+
 def build_entry(key, html, limit):
     info = INSTRUMENTS[key]
     quotes = extract_quotes(html)[:limit]
@@ -151,6 +161,7 @@ def main():
     ap.add_argument("--limit", type=int, default=5, help="delivery months to keep (default 5)")
     ap.add_argument("--html", help="parse this saved HTML file instead of fetching")
     ap.add_argument("-o", "--output", help="write JSON to this file instead of stdout")
+    ap.add_argument("--save-raw", help="also save the raw Euronext response to this file (for troubleshooting)")
     args = ap.parse_args()
 
     keys = args.instrument or list(INSTRUMENTS)
@@ -165,9 +176,14 @@ def main():
         except Exception as exc:  # network error, 403, etc.
             print(f"[{key}] fetch failed: {exc}", file=sys.stderr)
             html = ""
+        if args.save_raw:
+            raw_path = args.save_raw if len(keys) == 1 else f"{args.save_raw}.{key}"
+            with open(raw_path, "w", encoding="utf-8") as f:
+                f.write(html)
         entry = build_entry(key, html, args.limit)
         if not entry["quotes"]:
             print(f"[{key}] no quotes found - check ENDPOINT / table layout", file=sys.stderr)
+            diagnose(html)
         entries.append(entry)
 
     result = {

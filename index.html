@@ -86,7 +86,7 @@
 
 <script>
 /* ---------- settings ---------- */
-const SOURCES    = ["prices.php", "prices.json"];   // tried in this order (prices.json is optional, written by euronext_prices.py)
+const SOURCES    = ["prices.json"];   // written by the GitHub Action (euronext_prices.py) on every run
 const REFRESH_MS = 5 * 60 * 1000;   // re-read the file every 5 minutes
 const LOCALE     = "en-GB";         // use "lt-LT" for 234,25 style numbers
 
@@ -177,7 +177,7 @@ async function load() {
     }
   }
   const hint = location.protocol === "file:"
-    ? "Page was opened from disk. Upload the files to a web server (PHP hosting) to get live prices."
+    ? "Page was opened from disk. Open the GitHub Pages address instead to see live prices."
     : problems.join(" | ");
   render(FALLBACK.wheat, FALLBACK.updated, "fallback", hint);
 }
