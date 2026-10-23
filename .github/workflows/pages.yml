@@ -1,0 +1,66 @@
+name: Update wheat prices and publish
+
+on:
+  # Daily, after the Euronext Paris close (18:30 Paris time). 17:45 UTC is after the close
+  # in both summer and winter time. GitHub may start scheduled runs a few minutes late.
+  schedule:
+    - cron: "45 17 * * 1-5"
+  # Run manually: repository -> Actions -> this workflow -> "Run workflow"
+  workflow_dispatch:
+  # Re-publish when you change the page itself
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Vilnius   # so the "Updated" time on the page is Vilnius time, not UTC
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Euronext wheat prices
+        run: |
+          mkdir -p site
+          python3 euronext_prices.py --instrument wheat -o site/prices.json
+          cat site/prices.json
+
+      - name: Stop if no prices were found (keeps the previous published prices online)
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("site/prices.json", encoding="utf-8"))
+          wheat = [x for x in d.get("marketPrices", []) if x.get("instrument") == "wheat"]
+          if not wheat or not wheat[0].get("quotes"):
+              print("No wheat quotes parsed from Euronext - aborting so the old prices stay published.")
+              sys.exit(1)
+          print("OK:", len(wheat[0]["quotes"]), "quotes")
+          PY
+
+      - name: Build site folder
+        run: cp index.html site/index.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
