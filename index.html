@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Euronext Wheat Prices</title>
+<style>
+  :root {
+    --bg: #f6f2e9; --card: #ffffff; --ink: #1b1f19; --muted: #6b6f60;
+    --line: #e3dccb; --accent: #22402e; --gold: #b08d22; --warn-bg: #fff6dc; --warn-ink: #6b5410;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14191a; --card: #1c2325; --ink: #eef0e8; --muted: #9aa393;
+      --line: #2e3836; --accent: #8fc7a0; --gold: #d6b24e; --warn-bg: #2d2a17; --warn-ink: #e6d9a0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 48px; }
+  .eyebrow { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+  h1 { margin: 6px 0 4px; font-size: clamp(24px, 5vw, 34px); line-height: 1.15; color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+  .hero { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .hero .price { font-size: clamp(40px, 10vw, 60px); font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1; }
+  .hero .unit { color: var(--muted); font-weight: 600; }
+  .hero .month { margin-left: auto; font-weight: 600; color: var(--gold); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  tr:last-child td { border-bottom: 0; }
+  tr.front td { font-weight: 700; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; min-width: 80px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  svg { width: 100%; height: auto; display: block; }
+  svg .axis { stroke: var(--line); }
+  svg .lbl { fill: var(--muted); font-size: 11px; }
+  svg .val { fill: var(--ink); font-size: 12px; font-weight: 600; }
+  svg .line { stroke: var(--accent); fill: none; stroke-width: 2.5; stroke-linejoin: round; }
+  svg .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2.5; }
+  .status { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .pill.live { background: #dff2e3; color: #1d5a2c; }
+  .pill.fallback { background: var(--warn-bg); color: var(--warn-ink); }
+  @media (prefers-color-scheme: dark) { .pill.live { background: #1e3a28; color: #9fe0b2; } }
+  .note { font-size: 13px; color: var(--muted); margin-top: 18px; }
+  .err { color: #b23b2e; }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">MATIF · Euronext Paris</div>
+  <h1>Milling Wheat No.2 futures</h1>
+  <p class="sub">Settlement-style prices by delivery month, EUR per tonne.</p>
+
+  <section class="card" id="hero" aria-live="polite">
+    <div class="hero">
+      <span class="price" id="frontPrice">–</span>
+      <span class="unit">EUR / t</span>
+      <span class="month" id="frontMonth"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <svg id="curve" viewBox="0 0 640 220" role="img" aria-label="Forward price curve"></svg>
+  </section>
+
+  <section class="card">
+    <table>
+      <thead><tr><th>Delivery</th><th class="num">EUR / t</th><th>Relative</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <div class="status" id="status"></div>
+  <p class="note">
+    Informational only, not an offer or trading advice. Prices are Euronext data (EBM contract) and may be delayed.
+    Check Euronext's data licence terms before republishing.
+  </p>
+</main>
+
+<script>
+/* ---------- settings ---------- */
+const SOURCES    = ["prices.php", "prices.json"];   // tried in this order (prices.json is optional, written by euronext_prices.py)
+const REFRESH_MS = 5 * 60 * 1000;   // re-read the file every 5 minutes
+const LOCALE     = "en-GB";         // use "lt-LT" for 234,25 style numbers
+
+/* Shown only if prices.json can't be loaded (e.g. page opened from disk).
+   These are the values shown on artagro.lt on 2026-10-22 19:45, not fetched from Euronext. */
+const FALLBACK = {
+  updated: "2026-10-22 19:45",
+  wheat: { instrument: "wheat", currency: "EUR", priceDate: "2026-10-22", quotes: [
+    { delivery: "Dec 2026", price: "234.25" },
+    { delivery: "Mar 2027", price: "234.25" },
+    { delivery: "May 2027", price: "234.25" },
+    { delivery: "Sep 2027", price: "225.50" },
+    { delivery: "Dec 2027", price: "231.25" }
+  ]}
+};
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function render(wheat, updated, source, errMsg) {
+  const quotes = (wheat.quotes || [])
+    .map(q => ({ delivery: q.delivery, price: parseFloat(q.price) }))
+    .filter(q => isFinite(q.price));
+  if (!quotes.length) { $("frontPrice").textContent = "–"; $("status").innerHTML = '<span class="err">No prices available.</span>'; return; }
+
+  const front = quotes[0];
+  $("frontPrice").textContent = fmt(front.price);
+  $("frontMonth").textContent = front.delivery;
+
+  const min = Math.min(...quotes.map(q => q.price));
+  const max = Math.max(...quotes.map(q => q.price));
+  const span = max - min || 1;
+
+  $("rows").innerHTML = quotes.map((q, i) => {
+    const w = 15 + 85 * (q.price - min) / span;   // keep the lowest bar visible
+    return `<tr class="${i === 0 ? "front" : ""}"><td>${esc(q.delivery)}</td>
+      <td class="num">${fmt(q.price)}</td>
+      <td><div class="bar"><span style="width:${w.toFixed(0)}%"></span></div></td></tr>`;
+  }).join("");
+
+  drawCurve(quotes, min, max);
+
+  const pill = source === "live"
+    ? '<span class="pill live">live data</span>'
+    : '<span class="pill fallback">embedded sample data</span>';
+  $("status").innerHTML = pill +
+    (wheat.priceDate ? `<span>Price date: ${esc(wheat.priceDate)}</span>` : "") +
+    (updated ? `<span>Updated: ${esc(updated)}</span>` : "") +
+    (errMsg ? `<span class="err">${esc(errMsg)}</span>` : "");
+}
+
+function drawCurve(quotes, min, max) {
+  const W = 640, H = 220, L = 20, R = 20, T = 28, B = 34;
+  const pad = Math.max((max - min) * 0.4, 2);
+  const lo = min - pad, hi = max + pad;
+  const x = i => quotes.length === 1 ? W / 2 : L + (W - L - R) * i / (quotes.length - 1);
+  const y = p => T + (H - T - B) * (1 - (p - lo) / (hi - lo));
+  const pts = quotes.map((q, i) => [x(i), y(q.price)]);
+  let s = `<line class="axis" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"/>`;
+  s += `<polyline class="line" points="${pts.map(p => p.join(",")).join(" ")}"/>`;
+  quotes.forEach((q, i) => {
+    s += `<circle class="dot" cx="${pts[i][0]}" cy="${pts[i][1]}" r="5"/>`;
+    s += `<text class="val" text-anchor="middle" x="${pts[i][0]}" y="${pts[i][1] - 12}">${fmt(q.price)}</text>`;
+    s += `<text class="lbl" text-anchor="middle" x="${pts[i][0]}" y="${H - 12}">${esc(q.delivery)}</text>`;
+  });
+  $("curve").innerHTML = s;
+}
+
+async function load() {
+  const problems = [];
+  for (const url of SOURCES) {
+    try {
+      const r = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = (await r.json()).error || ""; } catch (_) {}
+        throw new Error("HTTP " + r.status + (detail ? " - " + detail : ""));
+      }
+      const j = await r.json();
+      const wheat = (j.marketPrices || []).find(x => x.instrument === "wheat");
+      if (!wheat || !wheat.quotes || !wheat.quotes.length) throw new Error("no wheat quotes");
+      render(wheat, j.marketPricesUpdatedAt, "live", j.stale ? "Euronext unreachable - showing last saved prices" : "");
+      return;
+    } catch (e) {
+      problems.push(url + ": " + e.message);
+    }
+  }
+  const hint = location.protocol === "file:"
+    ? "Page was opened from disk. Upload the files to a web server (PHP hosting) to get live prices."
+    : problems.join(" | ");
+  render(FALLBACK.wheat, FALLBACK.updated, "fallback", hint);
+}
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
